@@ -227,6 +227,7 @@ class Draw_DC_IV(Process_DC_IV):
         DC_IV_data = self.get_single_data(contact=contact, measure=measure)
         V, I = DC_IV_data['voltage'], np.abs(DC_IV_data['current'])
         fig, ax = plt.subplots(figsize = [10,5])
+        ax.set_title(f'Contact {contact}, measurement № {measure}')
         ax.set_yscale('log')
         ax.grid(which='major', linewidth = 0.6)
         ax.grid(which='minor', linewidth = 0.2)
