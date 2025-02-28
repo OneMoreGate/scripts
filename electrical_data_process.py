@@ -293,3 +293,9 @@ class Draw_DC_IV():
         ax_3_4.set(ylim = ax_2_4.get_ylim())
 
         return (fig, ax_1, [ax_2_1, ax_2_2, ax_2_3, ax_2_4], [ax_3_1, ax_3_2, ax_3_3, ax_3_4])
+
+    def add_single_line(self, ax: axes, contact: str, measur: str, **kwargs) -> axes:
+        DC_IV_data = get_DC_IV_data(os.path.join(self.__sample_path, contact, str(measur) + '.data'))
+        V, I = DC_IV_data['voltage'], np.abs(DC_IV_data['current'])
+        line = ax.plot(V, I, **kwargs)
+        return line
