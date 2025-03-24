@@ -1,272 +1,328 @@
+from matplotlib import cm
 from matplotlib import axes
 from matplotlib import colormaps
+from matplotlib import ticker
 from matplotlib import pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.gridspec import GridSpec
-import matplotlib.ticker as ticker
 from matplotlib.colors import LinearSegmentedColormap
 import pandas as pd 
 import numpy as np 
 import os
 import shutil
 
-class Measurments():
+class DC_IV():
+
     # инициализация, проверка существования папки, проверка пустоты папки
-    def __init__(self, sample: str) -> None:
+    def __init__(self, sample: str):
+        sample = str(sample)
         if not os.path.exists(sample):
             raise FileNotFoundError(f'directory \'{sample}\' is not exist')
-        elif  (len(os.listdir(sample)) == 0):
+        elif  len(os.listdir(sample)) == 0:
             raise ValueError(f'directory \'{sample}\' is empty')
         else:
-            self.__sample = sample
+            self.__sample_name = sample
             self.__sample_path = os.path.abspath(sample)
-            self.__create_dict_of_measurments()
-            
-    # поиск всех вложенных директорий в основной папке
-    def __find_contacts_folder(self) -> None:
-        self.__contacts_list = []
-        for i in os.listdir(self.__sample):
-            if os.path.isdir(os.path.join(self.__sample, i)):
-                self.__contacts_list.append(f'{i}')
+            self.__collect_full_dict()
 
-    # проверка, что файл типа data
-    def __is_data_file(self, path: str) -> bool:
-        if path.split('.')[-1] == 'data':
+    # самая частовстречающаяся ошибка 
+    def __contact_errors(self, contact):
+        if isinstance(contact, list):
+            raise ValueError(f'contact value must be str or int or float, not list')
+        contact = str(contact)
+        if contact not in self.__contacts_list:
+            raise ValueError(f'contact {contact} is not exist in {self.__sample_name}')
+        return contact
+
+    # поиск всех вложенных директорий в основной папке (поиск контактов, на которых проводились измерения)
+    def __find_contacts(self) -> None:
+        self.__contacts_list = []
+        for i in os.listdir(self.__sample_path):
+            if os.path.isdir(os.path.join(self.__sample_path, i)):
+                self.__contacts_list.append(f'{i}')
+        if len(self.__contacts_list) == 0:
+            raise ValueError(f'\'{self.__sample_path}\' does not contain subdirectories')
+
+    # проверка, что файл с данными типа .data (отсекаем остальные файлы, если имеются)
+    def __is_data(self, data_file_path: str) -> bool:
+        if data_file_path.split('.')[-1] == 'data':
             return True
         else:
             return False
         
     # создание пути из названия папок
-    def __create_path(self, path_list: list[str]) -> str:
+    def __join_path(self, path_list: list[str]) -> str:
         return os.path.join(self.__sample_path, *path_list)
-
-    # считывание данных об измерениях из файлов во вложенных директориях
-    def __create_dict_of_measurments(self) -> None:
-        self.__find_contacts_folder()
-        if len(self.__contacts_list) == 0:
-            raise ValueError(f'directory \'{self.__sample}\' does not contain subdirectories')
-        self.__dict_of_measurments = {}
-        for contact in self.__contacts_list:
-            subdir_catalogs_list = [file for file in os.listdir(self.__create_path([contact])) if self.__is_data_file(self.__create_path([contact, file]))]
-            if len(subdir_catalogs_list) == 0:
-                continue
-            contact_measurs_type = {}
-            for measure in subdir_catalogs_list:
-                file_path = self.__create_path([contact, measure])
-                with open(file_path) as file:
-                    measur_type = '_'.join(file.readlines()[1].split()[1:3])
-                contact_measurs_type[measure.replace('.data', '')] = measur_type
-            sorted_contact_measurs_type = dict(sorted(contact_measurs_type.items(), key=lambda item: int(item[0])))
-            self.__dict_of_measurments[contact] = sorted_contact_measurs_type
-        
-    # возврат полного словаря со всеми контактами и измерениямими 
-    def get_full_dict(self)-> dict:
-        return self.__dict_of_measurments
-        
-    # абсолютный путь к указанной папке
-    def get_abspath(self) -> str:
-        return self.__sample_path
     
-    def get_contacts(self) -> list:
-        return list(self.__contacts_list)
-    
-    # получение словаря с измерениями только с одного контакта
-    def get_contact_dict(self, contact_name: str | int) -> dict:
-        if not isinstance(contact_name, str | int):
-            raise ValueError(f'contact_name must be str or int type')
-        elif str(contact_name) not in list(self.__dict_of_measurments.keys()):
-            raise ValueError(f'{contact_name} not exist in {self.__sample}')
-        else:
-            return {str(contact_name) :self.__dict_of_measurments[str(contact_name)]}
-    
-    # удаление контакта или контактов из словаря с измерениями
-    def delete_contacts(self, contacts_name: str | list) -> None:
-        if not isinstance(contacts_name, list):
-            contacts_name = [contacts_name]
-        for contact in contacts_name:
-            try:
-                self.__contacts_list.remove(str(contact))
-                del self.__dict_of_measurments[str(contact)]
-            except:
-                continue
-    
-    # удаление измерений из контакта 
-    def delete_measurments(self, del_dict: dict) -> None:
-        for contact in list(del_dict.keys()):
-            if str(contact) in self.__contacts_list:
-                if not isinstance(del_dict[contact], list):
-                    raise ValueError(f'dict values must be {list} type')
-                for measur in del_dict[contact]:
-                    if str(measur) in list(self.__dict_of_measurments[str(contact)]):
-                        self.__dict_of_measurments[str(contact)].pop(str(measur), None)
-                    else:
-                        continue
-            else:
-                continue
-
-# возвращает датафрейм с ВАХ конкретного измерения
-def get_DC_IV_data(data_path: str) -> pd.DataFrame:
-    DC_IV_dataframe = pd.read_csv(data_path, delimiter='   ', skiprows=16, engine='python', header=None, encoding='ISO-8859-1').astype(np.float32)
-    DC_IV_dataframe.rename(columns = {0: 'voltage', 1: 'current', 2: 'resistance'}, inplace=True)
-    DC_IV_dataframe['voltage'] = pd.Series([round(i, 2) for i in DC_IV_dataframe['voltage']])
-    return DC_IV_dataframe
-
-class Process_DC_IV():
-     
-    def __init__(self, sample_path: str) -> None:
-        self.__sample_path = sample_path
-
-    # выозвращает словарь со значениями токов во включенном и выключенном состоянии на основе списка измерений
-    def on_off_current(self, dict_of_measurs: dict, check_voltage: float)-> dict:
-        I_on = []
-        I_off = []
-        I_on_off = []
-        for contact in list(dict_of_measurs.keys()):
-            for measur in list(dict_of_measurs[contact].keys()):
-                if dict_of_measurs[contact][measur] == 'DC_IV':
-                    DC_IV_data = get_DC_IV_data(os.path.join(self.__sample_path, contact, measur + '.data'))
-                else:
-                    continue
-                if check_voltage not in list(DC_IV_data['voltage']):
-                    print(f'value V = {check_voltage} is not exist in file \'{measur}.data\' from \'{contact}\' contact')
-                    continue
-                else:
-                    try:
-                        a, b = DC_IV_data.loc[DC_IV_data['voltage'] == check_voltage]['current']
-                        I_on.append(a)
-                        I_off.append(b)
-                        I_on_off.append(a/b)
-                    except:
-                        print(f'Unexpected error in file \'{measur}.data\' from \'{contact}\' folder')
-                        continue
-        return {'I_on': np.array(I_on), 'I_off':np.array(I_off), 'I_on_off': np.array(I_on_off)}
-
-    # расчитывает напряжения включения и выключения у ВАХ типа ReRAM на основе списка измерений
-    def ReRAM_on_off_voltage(self, dict_of_measurs: dict) -> np.array:
-        on_off_voltage = []
-        for contact in list(dict_of_measurs.keys()):
-            for measur in list(dict_of_measurs[contact].keys()):
-                if dict_of_measurs[contact][measur] == 'DC_IV':
-                    DC_IV_data = get_DC_IV_data(os.path.join(self.__sample_path, contact, measur+ '.data'))
-                else:
-                    continue
-                V, I = DC_IV_data['voltage'], DC_IV_data['current']
-                delta_V = V[1] - V[0]
-                deriv = np.array([(I[i+1] - I[i])/(V[i+1] - V[i]) if (V[i+1] - V[i]) != 0 else (I[i+1] - I[i])/delta_V for i in range(len(I) - 1) ])
-                df_2 = pd.DataFrame([V[:-1], np.abs(deriv)]).transpose()
-                df_2.rename(columns = {'voltage': 'voltage', 'Unnamed 0': 'derivative'}, inplace=True)
-                df_plus = df_2.loc[df_2['voltage'] > 0].reset_index(drop = True)
-                df_minus = df_2.loc[df_2['voltage'] < 0].reset_index(drop = True)
-                on_off_voltage.append([df_minus.loc[np.argmax(df_minus['derivative'])]['voltage'] , np.abs(df_plus.loc[np.argmax(df_plus['derivative'])]['voltage'])])
-        return np.array(on_off_voltage).transpose()
-    
-    # возвращает словать со всеми ВАХами на основе списка измерений
-    def data_from_custom_dict(self, dict_of_measurs: dict) -> dict:
-        data_dict = {}
-        for contact in list(dict_of_measurs.keys()):
-            single_contact_data = {}
-            for measur in list(dict_of_measurs[contact].keys()):
-                    if dict_of_measurs[contact][measur] == 'DC_IV':
-                        single_contact_data[measur] = get_DC_IV_data(os.path.join(self.__sample_path, contact, measur + '.data'))
-                    else:
-                        continue
-            data_dict[contact] = single_contact_data
-        return data_dict
-
-class Draw_DC_IV():
-
-    def __init__(self, sample_path: str) -> None:
-        self.__sample_path = sample_path
-    
-    def __to_colors(self, lenght: int, start_color: str, end_color: str):
-        custom_cmap = LinearSegmentedColormap.from_list("custom_gradient", [start_color, end_color])
-        colors = custom_cmap(np.linspace(0, 1, lenght))
-        return colors
-        
-    # рисует одну ВАХ
-    def single_plot(self, contact: str, measur: str, save_path: str) -> None:
-        DC_IV_data = get_DC_IV_data(os.path.join(self.__sample_path, str(contact), str(measur) + '.data'))
-        V, I = DC_IV_data['voltage'], np.abs(DC_IV_data['current'])
-        fig, ax = plt.subplots(figsize = [10,5])
-        ax.set_yscale('log')
-        ax.grid(which='major', linewidth = 0.6)
-        ax.grid(which='minor', linewidth = 0.2)
-        ax.set_xlim(xmin= V.min()*1.2, xmax=V.max()*1.2)
-        ax.set_ylim(ymin= I.min()*0.2, ymax=I.max()*5)
-        colors = colormaps['plasma'](np.linspace(0, 1, len(V)))
-        segments = [[[V[i], I[i]], [V[i+1], I[i+1]]] for i in range(len(V)-1)]
-        line_coll = LineCollection(segments)
-        line_coll.set_color(colors)
-        lines = ax.add_collection(line_coll)
-        cbar = fig.colorbar(lines)
-        cbar.set_ticks([0, 1])
-        cbar.set_ticklabels(['start','end'], size = 15)
-        plt.savefig(save_path, bbox_inches = 'tight', dpi = 200)
-        plt.close()
-
     # создает папку по запрошенному пути
-    def _create_dir(self, path: str) -> None:
+    def __create_dir(self, path: str) -> None:
         if os.path.isdir(path):
             shutil.rmtree(path, ignore_errors=True)
             os.mkdir(path)
         else:
             os.mkdir(path)
 
-    # рисует отдельные графиики по кастомному словарю и выбранному пути
-    def from_dict(self, dict_of_measurs: dict, save_path: str) -> None:
-        save_folder = os.path.join(os.path.dirname(self.__sample_path), str(save_path))
-        self._create_dir(save_folder)
-        for contact in list(dict_of_measurs.keys()):
-            if len(list(dict_of_measurs.keys())) > 1:
-                contact_save_path = os.path.join(save_folder, contact)
-                self._create_dir(contact_save_path)
-            else:
-                contact_save_path = save_folder
-            for measur in list(dict_of_measurs[contact].keys()):
-                if dict_of_measurs[contact][measur] == 'DC_IV':
-                    measure_save_path = os.path.join(contact_save_path, measur + '.png')
-                    self.single_plot(contact, measur, measure_save_path)
+    # создает градиент по двум цветам и количеству точек
+    def __to_colors(self, lenght: int, start_color: str, end_color: str):
+        custom_cmap = LinearSegmentedColormap.from_list("custom_gradient", [start_color, end_color])
+        colors = custom_cmap(np.linspace(0, 1, lenght))
+        return colors
+    
+    # сбор информации о файлах, содержащих DC IV измерения в каждом контакте
+    def __collect_full_dict(self) -> None:
+        self.__find_contacts()
+        self.__full_DC_IV_dict = {}
+        for contact in self.__contacts_list:
+            contact_files_list = []
+            for file in os.listdir(self.__join_path([contact])):
+                if self.__is_data(self.__join_path([contact, file])):
+                    contact_files_list.append(file)
+            if len(contact_files_list) == 0:
+                continue
+            contact_DC_IV_measurs = []
+            for measure in contact_files_list:
+                measure_path = self.__join_path([contact, measure])
+                with open(measure_path) as file:
+                    measur_type = file.readlines()[1]
+                if 'DC IV' in measur_type:
+                    contact_DC_IV_measurs.append(int(measure.replace('.data', '')))
                 else:
                     continue
+            self.__full_DC_IV_dict[contact] = sorted(contact_DC_IV_measurs)
 
-    # задает градиент для последовательности графиков
-    def colorize_multiple(self, line_coll: LineCollection, start_color: str = '#ff0000', end_color: str = '#1e00ff'):
-        line_coll.set_color(self.__to_colors(len(line_coll._paths), start_color, end_color))
+    # удаление контакта или контактов из словаря с измерениями
+    def delete_contacts(self, contact: str | list) -> None:
+        if not isinstance(contact, list):
+            contact = [contact]
+        for contact in contact:
+            contact = str(contact)
+            if contact in self.__contacts_list:
+                self.__contacts_list.remove(contact)
+                del self.__full_DC_IV_dict[contact]
+            else:
+                print(f'contact {contact} not exist in {self.__sample_name}')
+
+    # удаление измерений из контакта 
+    def delete_measurs(self, contact: str | int, measur: list) -> None:
+        contact = self.__contact_errors(contact)
+        will_be_del = set([i for i in measur if type(i) == int])
+        for measur in will_be_del:
+            if measur in self.__full_DC_IV_dict[contact]:
+                self.__full_DC_IV_dict[contact].remove(measur)
+
+    # возвращает список DC IV измерений с одного контакта 
+    def get_contact_measurs(self, contact: str | int):
+        contact = self.__contact_errors(contact)
+        return self.__full_DC_IV_dict[contact]
+
+    # возврат полного словаря со всеми контактами и измерениямими 
+    def get_full_dict(self)-> dict:
+        return self.__full_DC_IV_dict
+        
+    # возвращает абсолютный путь к указанной папке
+    def get_abspath(self) -> str:
+        return self.__sample_path
+    
+    # возвращает список контактов
+    def get_contacts(self) -> list:
+        return self.__contacts_list
+    
+    # возвращает датафрейм с ВАХ конкретного измерения
+    def get_single_data(self, contact: str | int, measur: int) -> pd.Series:
+        contact = self.__contact_errors(contact)
+        measur = str(measur) + '.data'
+        data_path = self.__join_path([contact, measur])
+        dataframe = pd.read_csv(data_path, 
+                                delimiter='   ', 
+                                skiprows=16, 
+                                engine='python', 
+                                header=None, 
+                                encoding='ISO-8859-1').astype(np.float32)
+        dataframe.rename(columns = {0: 'voltage', 1: 'current', 2: 'resistance'}, inplace=True)
+        dataframe['voltage'] = pd.Series([round(i, 2) for i in dataframe['voltage']])
+        return dataframe['voltage'], dataframe['current']
+    
+    # возвращает данные с нескольких контактов
+    def get_contacts_data(self, contact: str | int | list):
+        contact = self.__contact_errors(contact)
+        data = {}
+        for measur in self.__full_DC_IV_dict[contact]:
+            Voltage, Current = self.get_single_data(contact, measur)
+            df = pd.DataFrame(np.array([Voltage, Current]).transpose())
+            df.rename(columns = {0: 'voltage', 1: 'current', 2: 'resistance'}, inplace=True)
+            data[measur] = df
+        return data
+        
+    # вызвращает словарь со значениями токов во включенном и выключенном состоянии на основе списка измерений
+    def get_on_off_current(self, contact: str | int, check_voltage: float, measurs: list = None) -> dict:
+        I_on = []
+        I_off = []
+        I_on_off = []
+        contact = self.__contact_errors(contact)
+        if measurs == None:
+            for measur in self.__full_DC_IV_dict[contact]:
+                Voltage, Current = self.get_single_data(contact, measur)
+                if check_voltage not in list(Voltage):
+                    print(f'value V = {check_voltage} is not exist in file \'{measur}.data\' from \'{contact}\' contact')
+                    continue
+                else:
+                    try:
+                        a, b = Current.loc[Voltage == check_voltage]
+                        I_on.append(a)
+                        I_off.append(b)
+                        I_on_off.append(a/b)
+                    except:
+                        print(f'Unexpected error in file \'{measur}.data\' from \'{contact}\' folder')
+                        continue
+        else:
+            if not isinstance(measurs, list):
+                raise TypeError(f'measurs must be list type not {type(measurs)}')
+            for measur in measurs:
+                if not isinstance(measur, int):
+                    raise TypeError(f'measurs elements must be int type not {type(measur)}')
+                Voltage, Current = self.get_single_data(contact, measur)
+                if check_voltage not in list(Voltage):
+                    print(f'value V = {check_voltage} is not exist in file \'{measur}.data\' from \'{contact}\' contact')
+                    continue
+                else:
+                    try:
+                        a, b = Current.loc[Voltage == check_voltage]
+                        I_on.append(a)
+                        I_off.append(b)
+                        I_on_off.append(a/b)
+                    except:
+                        print(f'Unexpected error in file \'{measur}.data\' from \'{contact}\' folder')
+                        continue
+
+        return {'on': np.array(I_on), 'off': np.array(I_off), 'on_off': np.array(I_on_off)}
+    
+    def __get_deriv(self, contact: str | int, measur: str | int) -> list:
+        Voltage, Current = self.get_single_data(contact, measur)
+        delta_V = Voltage[1] - Voltage[0]
+        derivative = []
+        for i in range(len(Current) -1):
+            derivative.append((Current[i + 1] - Current[i])/(delta_V))
+        df_deriv = pd.DataFrame([pd.Series(Voltage[:-1]), pd.Series(derivative)]).transpose()
+        df_deriv.rename(columns = {'voltage': 'voltage', 'Unnamed 0': 'derivative'}, inplace=True)
+        pos_voltage_deriv = df_deriv.loc[df_deriv['voltage'] > 0].reset_index(drop = True)
+        neg_voltage_deriv = df_deriv.loc[df_deriv['voltage'] < 0].reset_index(drop = True)
+        return [pos_voltage_deriv, neg_voltage_deriv]
+    
+    # расчитывает напряжения включения и выключения у ВАХ типа ReRAM на основе списка измерений
+    def get_ReRAM_on_off_voltage(self, contact: str | int, branch: str = 'both') -> dict | list:
+        if branch not in ['both', 'b', 'positive', 'p', 'negative', 'n']:
+            raise ValueError('uncorrect branch value')
+        positive_switch = []
+        negative_switch = []
+        contact = self.__contact_errors(contact)
+        for measur in self.__full_DC_IV_dict[contact]:
+            pos_voltage_deriv, neg_voltage_deriv = self.__get_deriv(contact, measur)
+            negative_switch.append(neg_voltage_deriv.loc[np.argmax(neg_voltage_deriv['derivative'])]['voltage'])
+            positive_switch.append(pos_voltage_deriv.loc[np.argmax(np.abs(pos_voltage_deriv['derivative']))]['voltage'])
+        if branch == 'both' or branch == 'b':
+            return {'positive_switch': positive_switch, 'negative_switch': negative_switch}
+        elif branch == 'positive' or branch == 'p':
+            return positive_switch
+        elif branch == 'negative' or branch == 'n':
+            return negative_switch
+        
+    def get_ts_on_off_voltage(self, contact: str | int, branch: str, center: float) -> dict | list:
+        if branch not in ['both', 'b', 'positive', 'p', 'negative', 'n']:
+            raise ValueError('uncorrect branch value')
+        V_th = []
+        V_hold = []
+        contact = self.__contact_errors(contact)
+        for measur in self.__full_DC_IV_dict[contact]:
+            pos_voltage_deriv, neg_voltage_deriv = self.__get_deriv(contact, measur)
+            if branch == 'n' or branch == 'negative':
+                neg_right = neg_voltage_deriv.loc[neg_voltage_deriv['voltage'] > center].reset_index(drop = True)
+                neg_left = neg_voltage_deriv.loc[neg_voltage_deriv['voltage'] < center].reset_index(drop = True)
+                V_th.append(neg_left.loc[np.argmax(neg_left['derivative'])]['voltage'])
+                V_hold.append(neg_right.loc[np.argmax(neg_right['derivative'])]['voltage'])
+            elif branch == 'p' or branch == 'positive':
+                pos_right = pos_voltage_deriv.loc[pos_voltage_deriv['voltage'] > center].reset_index(drop = True)
+                pos_left = pos_voltage_deriv.loc[pos_voltage_deriv['voltage'] < center].reset_index(drop = True)
+                V_th.append(pos_right.loc[np.argmax(pos_right['derivative'])]['voltage'])
+                V_hold.append(pos_left.loc[np.argmax(pos_left['derivative'])]['voltage'])
+        return [V_th, V_hold]
+            
+    # рисует одну ВАХ
+    def draw_single_plot(self, contact: str | int, measur: str | int, save_path: str = None, cmap: str = 'plasma') -> None:
+        contact = self.__contact_errors(contact)
+        measur = str(measur)
+        V, I = self.get_single_data(contact, measur)
+        I = np.abs(I)
+        fig, ax = plt.subplots(figsize = [10,5])
+        ax.grid(which='major', linewidth = 0.6)
+        ax.grid(which='minor', linewidth = 0.2)
+        ax.set_title(f'contact {contact} measurment №{measur}')
+        color = colormaps[cmap](np.linspace(0, 1, len(V)))
+        segments = [([V[i], I[i]], [V[i+1], I[i+1]]) for i in range(len(V)-1)]
+        line_coll = LineCollection(segments)
+        line_coll.set_colors(color)
+        line_coll.set_joinstyle('round')
+        ax.add_collection(line_coll)
+        cbar = fig.colorbar(cm.ScalarMappable(cmap=cmap), ax=ax)
+        cbar.set_ticks([0, 1])
+        cbar.set_ticklabels(['start','end'], size = 15)
+        ax.autoscale_view()
+        ax.set_yscale('log')
+        if save_path != None:
+            plt.savefig(save_path, bbox_inches = 'tight', dpi = 200)
+            plt.close()
+
+    # добавляет одну ВАХ на график
+    def draw_single_line(self, contact: str, axes: axes, measur: str, **kwargs) -> axes:
+        contact = self.__contact_errors(contact)
+        V, I = self.get_single_data(contact, measur)
+        I = np.abs(I)
+        line = axes.plot(V, I, **kwargs)
+        return line
 
     # рисует множество данных на одном графике
-    def multiple(self, dict_of_measurs: dict, axes: axes, **kwargs) -> None:
+    def draw_multiple_lines(self, contact: str | int, axes: axes, measurs: list = None, **kwargs):
+        contact = self.__contact_errors(contact)
         data_colletcion = []
-        for contact in list(dict_of_measurs.keys()):
-            for measur in list(dict_of_measurs[contact].keys()):
-                if dict_of_measurs[contact][measur] == 'DC_IV':
-                    DC_IV_data = get_DC_IV_data(os.path.join(self.__sample_path, contact, measur + '.data'))
-                    data_colletcion.append(np.array([DC_IV_data['voltage'], np.abs(DC_IV_data['current'])]).transpose())
-                else:
-                    continue
+        if measurs == None:
+            for measur in self.__full_DC_IV_dict[contact]:
+                V, I = self.get_single_data(contact, measur)
+                data_colletcion.append(np.array([V, np.abs(I)]).transpose())
+        else:
+            if not isinstance(measurs, list):
+                raise TypeError(f'measurs must be list type not {type(measurs)}')
+            for measur in measurs:
+                if not isinstance(measur, int):
+                    raise TypeError(f'measurs elements must be int type not {type(measur)}')
+                V, I = self.get_single_data(contact, measur)
+                data_colletcion.append(np.array([V, np.abs(I)]).transpose())
         line_collection = LineCollection(data_colletcion, **kwargs)
         lines = axes.add_collection(line_collection)
         axes.autoscale_view()
         return lines
-    
+
     # рисует всю инфу о ReRAM переключениях из отдельного словаря
-    def full_ReRAM_info(self, dict_of_measurs: dict, I_on_off: dict, V_on_off: np.array, current_scale: int = 1000, bins: int = 10, start_color: str = '#ff0000', end_color: str = '#1e00ff', **kwargs):
+    def draw_full_ReRAM_info(self, contact: str | int, check_voltage: float, current_scale: int = 1000, bins: int = 10, start_color: str = '#ff0000', end_color: str = '#1e00ff', **kwargs):
+        contact = self.__contact_errors(contact)
+
+        I = self.get_on_off_current(contact, check_voltage)
+        I_on, I_off = I['on'], I['off']
+        V = self.get_ReRAM_on_off_voltage(contact)
+        V_pos, V_neg = V['positive_switch'], V['negative_switch']
+
         fig = plt.figure(figsize=(12, 7), constrained_layout=True)
         gs = GridSpec(ncols=10, nrows=4, figure=fig)
-
         ax_1 = plt.subplot(gs[:4, :6])
-
         ax_2_1 = plt.subplot(gs[0,6:9])
         ax_2_2 = plt.subplot(gs[1,6:9])
         ax_2_3 = plt.subplot(gs[2,6:9])
         ax_2_4 = plt.subplot(gs[3,6:9])
-
         ax_3_1 = plt.subplot(gs[0,9])
         ax_3_2 = plt.subplot(gs[1,9])
         ax_3_3 = plt.subplot(gs[2,9])
         ax_3_4 = plt.subplot(gs[3,9])
 
-        coll = self.multiple(dict_of_measurs, ax_1, **kwargs)
-        self.colorize_multiple(coll, start_color, end_color)
+        coll = self.draw_multiple_lines(contact, ax_1, **kwargs)
+        self.colorize_multiple_lines(coll, start_color, end_color)
         ax_1.autoscale_view()
         ax_1.set_yscale('log')
         y_major = ticker.LogLocator(numticks = 10)
@@ -274,28 +330,61 @@ class Draw_DC_IV():
         ax_1.yaxis.set_major_locator(y_major)
         ax_1.yaxis.set_minor_locator(y_minor)
 
-        ax_2_1.plot(range(len(I_on_off['I_on'])), I_on_off['I_on'] * current_scale)
-        ax_2_2.plot(range(len(I_on_off['I_off'])), I_on_off['I_off'] * current_scale)
-        ax_2_3.plot(range(len(V_on_off[0])), V_on_off[0])
-        ax_2_4.plot(range(len(V_on_off[1])), V_on_off[1])
+        ax_2_1.plot(range(len(I_on)), I_on * current_scale)
+        ax_2_2.plot(range(len(I_off)), I_off * current_scale)
+        ax_2_3.plot(range(len(V_pos)), V_pos)
+        ax_2_4.plot(range(len(V_neg)), V_neg)
 
-        ax_3_1.hist(I_on_off['I_on'] * current_scale, bins=bins, rwidth=0.8, edgecolor = 'k', orientation = 'horizontal')
+        ax_3_1.hist(I_on * current_scale, bins=bins, rwidth=0.8, edgecolor = 'k', orientation = 'horizontal')
         ax_3_1.axis('off')
         ax_3_1.set(ylim = ax_2_1.get_ylim())
-        ax_3_2.hist(I_on_off['I_off'] * current_scale, bins=bins, rwidth=0.8, edgecolor = 'k', orientation = 'horizontal')
+        ax_3_2.hist(I_off * current_scale, bins=bins, rwidth=0.8, edgecolor = 'k', orientation = 'horizontal')
         ax_3_2.axis('off')
         ax_3_2.set(ylim = ax_2_2.get_ylim())
-        ax_3_3.hist(V_on_off[0], bins=bins, rwidth=0.8, edgecolor = 'k', orientation = 'horizontal')
+        ax_3_3.hist(V_pos, bins=bins, rwidth=0.8, edgecolor = 'k', orientation = 'horizontal')
         ax_3_3.axis('off')
         ax_3_3.set(ylim = ax_2_3.get_ylim())
-        ax_3_4.hist(V_on_off[1],bins=bins, rwidth=0.8,  edgecolor = 'k', orientation = 'horizontal')
+        ax_3_4.hist(V_neg,bins=bins, rwidth=0.8,  edgecolor = 'k', orientation = 'horizontal')
         ax_3_4.axis('off')
         ax_3_4.set(ylim = ax_2_4.get_ylim())
 
         return (fig, ax_1, [ax_2_1, ax_2_2, ax_2_3, ax_2_4], [ax_3_1, ax_3_2, ax_3_3, ax_3_4])
+    
+    # рисует все графики в образце
+    def draw_all_graphs(self):
+        save_folder = self.__sample_path + '_all_graphs'
+        self.__create_dir(save_folder)
+        for contact in self.__contacts_list:
+            contact_save_path = os.path.join(save_folder, contact)
+            self.__create_dir(contact_save_path)
+            for measur in self.__full_DC_IV_dict[contact]:
+                sigle_graph_path = os.path.join(contact_save_path, str(measur) + '.png')
+                self.draw_single_plot(contact, measur, sigle_graph_path)
 
-    def add_single_line(self, ax: axes, contact: str, measur: str, **kwargs) -> axes:
-        DC_IV_data = get_DC_IV_data(os.path.join(self.__sample_path, contact, str(measur) + '.data'))
-        V, I = DC_IV_data['voltage'], np.abs(DC_IV_data['current'])
-        line = ax.plot(V, I, **kwargs)
-        return line
+    # рисует все графики с одного контакта
+    def draw_contact_graphs(self, contact: str | int, save_path: str):
+        contact = self.__contact_errors(contact)
+        save_folder = os.path.join(os.path.dirname(self.__sample_path), save_path)
+        self.__create_dir(save_folder)
+        for measur in self.__full_DC_IV_dict[contact]:
+            sigle_graph_path = os.path.join(save_folder, str(measur) + '.png')
+            self.draw_single_plot(contact, measur, sigle_graph_path)
+
+    # задает градиент для последовательности графиков
+    def colorize_multiple_lines(self, lines: LineCollection, start_color: str = '#ff0000', end_color: str = '#1e00ff'):
+        if isinstance(lines, LineCollection):
+            lines.set_color(self.__to_colors(len(lines.get_segments()), start_color, end_color))
+        else:
+            raise TypeError('lines must be LineCollection type')
+        
+    # задает градиент для одного графика
+    def colorize_line(self, ax: axes, which: int = 1, start_color: str = '#ff0000', end_color: str = '#1e00ff',**kwargs):
+        lines = ax.get_lines()
+        V, I = lines[which-1].get_data()
+        I = np.abs(I)
+        segments = [([V[i], I[i]], [V[i+1], I[i+1]]) for i in range(len(V)-1)]
+        color = self.__to_colors(len(segments), start_color, end_color)
+        line_coll = LineCollection(segments, **kwargs)
+        line_coll.set_colors(color)
+        line_coll.set_joinstyle('round')
+        ax.add_collection(line_coll)
